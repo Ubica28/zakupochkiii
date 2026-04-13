@@ -1,66 +1,36 @@
 # -*- coding: utf-8 -*-
-import sqlite3
 import os
-import time
 import re
 import json
+import time
 from datetime import datetime
+from io import BytesIO
+
 from flask import Flask, request, jsonify, render_template, send_from_directory
 from flask_cors import CORS
+from supabase import create_client, Client
 from werkzeug.utils import secure_filename
+from PIL import Image
 import requests
 from dotenv import load_dotenv
 
-# Загружаем переменные окружения из .env (только для локальной разработки)
+# ========== ЗАГРУЗКА ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ==========
 load_dotenv()
 
+# ========== НАСТРОЙКИ SUPABASE ==========
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# ========== КОНФИГУРАЦИЯ ==========
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+ALLOWED_USERS = [int(id.strip()) for id in os.getenv("ALLOWED_USERS", "").split(",") if id.strip()]
+TELEGRAM_API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+
+# ========== ПРИЛОЖЕНИЕ FLASK ==========
 app = Flask(__name__)
 CORS(app)
-
-# ========== БАЗА ДАННЫХ ==========
-def init_db():
-    conn = sqlite3.connect('zakupki.db')
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS items
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  url TEXT,
-                  title TEXT,
-                  price TEXT,
-                  image_url TEXT,
-                  priority TEXT,
-                  status TEXT,
-                  notes TEXT,
-                  author TEXT,
-                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-    conn.commit()
-    conn.close()
-
-init_db()
-
-def add_columns():
-    conn = sqlite3.connect('zakupki.db')
-    c = conn.cursor()
-    try: c.execute('ALTER TABLE items ADD COLUMN notes TEXT')
-    except: pass
-    try: c.execute('ALTER TABLE items ADD COLUMN author TEXT')
-    except: pass
-    try: c.execute('ALTER TABLE items ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
-    except: pass
-    conn.commit()
-    conn.close()
-
-add_columns()
-
-# Разрешённые пользователи из переменной окружения (например: "955345205,123456789")
-ALLOWED_USERS_STR = os.getenv('ALLOWED_USERS', '')
-ALLOWED_USERS = [int(id.strip()) for id in ALLOWED_USERS_STR.split(',') if id.strip()]
-
-UPLOAD_FOLDER = 'uploads'
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-
-BOT_TOKEN = os.getenv('BOT_TOKEN')
-TELEGRAM_API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
 def send_telegram_notification(chat_id, text):
     try:
@@ -69,31 +39,32 @@ def send_telegram_notification(chat_id, text):
     except Exception as e:
         print(f"Ошибка отправки уведомления: {e}")
 
-@app.route('/uploads/<filename>')
-def uploaded_file(filename):
-    return send_from_directory(UPLOAD_FOLDER, filename)
+# ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-@app.route('/')
-def index():
-    return render_template('index.html')
+def compress_image(file_bytes, max_size_mb=0.5, quality=75):
+    """Сжимает изображение и возвращает BytesIO с JPEG"""
+    img = Image.open(file_bytes)
+    if img.mode in ('RGBA', 'P'):
+        img = img.convert('RGB')
+    max_dimension = 1200
+    if max(img.size) > max_dimension:
+        ratio = max_dimension / max(img.size)
+        new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
+        img = img.resize(new_size, Image.Resampling.LANCZOS)
+    output = BytesIO()
+    img.save(output, format='JPEG', quality=quality, optimize=True)
+    output.seek(0)
+    if output.getbuffer().nbytes > max_size_mb * 1024 * 1024:
+        return compress_image(BytesIO(output.getvalue()), max_size_mb, quality - 10)
+    return output
 
-@app.route('/cats/<filename>')
-def cat_image(filename):
-    return send_from_directory('cats', filename)
-
-@app.route('/api/cats', methods=['GET'])
-def get_cats():
-    cats_folder = os.path.join(os.path.dirname(__file__), 'cats')
-    if not os.path.exists(cats_folder):
-        return jsonify({'images': []})
-    files = [f for f in os.listdir(cats_folder) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.gif'))]
-    return jsonify({'images': files})
-
-# ========== ПАРСИНГ ==========
 def extract_url_from_text(text):
     match = re.search(r'https?://\S+', text)
     return match.group(0) if match else text.strip()
 
+# ========== ПАРСИНГ ТОВАРОВ (ваш рабочий код) ==========
 def parse_product(url):
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
@@ -242,21 +213,35 @@ def parse_product(url):
 
     return None, None, None
 
-# ========== API ==========
+# ========== API МАРШРУТЫ ==========
+@app.route('/ping')
+def ping():
+    return "OK", 200
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
 @app.route('/api/upload_image', methods=['POST'])
 def upload_image():
+    if 'photo' not in request.files:
+        return jsonify({'error': 'Нет файла'}), 400
+    file = request.files['photo']
+    if file.filename == '' or not allowed_file(file.filename):
+        return jsonify({'error': 'Некорректный тип файла'}), 400
     try:
-        if 'photo' not in request.files:
-            return jsonify({'error': 'Нет файла'}), 400
-        file = request.files['photo']
-        if file.filename == '':
-            return jsonify({'error': 'Пустое имя файла'}), 400
-        filename = secure_filename(f"{int(time.time())}_{file.filename}")
-        file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
-        # Возвращаем относительный путь
-        relative_path = f"/uploads/{filename}"
-        return jsonify({'url': relative_path})
+        compressed = compress_image(file.stream)
+        file_ext = 'jpg'
+        filename = f"{int(time.time())}_{secure_filename(file.filename.rsplit('.', 1)[0])}.{file_ext}"
+        supabase.storage.from_("product-images").upload(
+            filename,
+            compressed.getvalue(),
+            {"content-type": "image/jpeg"}
+        )
+        public_url = supabase.storage.from_("product-images").get_public_url(filename)
+        return jsonify({'url': public_url})
     except Exception as e:
+        print(f"Ошибка загрузки фото: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/parse', methods=['POST'])
@@ -288,29 +273,29 @@ def add_item():
         user_id = data.get('user_id')
         if user_id not in ALLOWED_USERS:
             return jsonify({'error': 'Доступ запрещён'}), 403
-
         url = data.get('url', '')
         title = data.get('title', 'Без названия')
-        conn = sqlite3.connect('zakupki.db')
-        c = conn.cursor()
-        c.execute("SELECT COUNT(*) FROM items WHERE url=? AND created_at > datetime('now', '-5 seconds')", (url,))
-        count = c.fetchone()[0]
-        if count > 0:
-            conn.close()
-            return jsonify({'error': 'Такой товар уже добавлялся только что'}), 409
-
-        priority = data.get('priority', 'medium')
         price = data.get('price', 'Цена не указана')
-        image_url = data.get('image_url', 'https://via.placeholder.com/300')
+        image_url = data.get('image_url', '')
+        priority = data.get('priority', 'medium')
         notes = data.get('notes', '')
         author = data.get('author', 'Гость')
-        c.execute('''INSERT INTO items (url, title, price, image_url, priority, status, notes, author, created_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-                  (url, title, price, image_url, priority, 'active', notes, author, datetime.now().isoformat()))
-        conn.commit()
-        conn.close()
-
         send_notification = data.get('send_notification', False)
+
+        # Вставка в Supabase
+        item_data = {
+            'url': url,
+            'title': title,
+            'price': price,
+            'image_url': image_url,
+            'priority': priority,
+            'status': 'active',
+            'notes': notes,
+            'author': author,
+            'created_at': datetime.now().isoformat()
+        }
+        supabase.table('items').insert(item_data).execute()
+
         if send_notification and user_id:
             msg = f"🛍 <b>Добавлен товар:</b>\n📦 {title}\n💰 {price}\n🔔 Приоритет: {priority}"
             send_telegram_notification(user_id, msg)
@@ -329,24 +314,11 @@ def get_items():
             return jsonify({'error': 'Доступ запрещён'}), 403
         status = data.get('status')
         author_filter = data.get('author_filter', 'all')
-        conn = sqlite3.connect('zakupki.db')
-        c = conn.cursor()
-        query = 'SELECT id, title, price, image_url, priority, notes, created_at, author FROM items WHERE status=?'
-        params = [status]
+        query = supabase.table('items').select('*').eq('status', status).order('created_at', desc=True)
         if author_filter != 'all':
-            query += ' AND author=?'
-            params.append(author_filter)
-        query += ' ORDER BY created_at DESC'
-        c.execute(query, params)
-        rows = c.fetchall()
-        conn.close()
-        items = []
-        for r in rows:
-            items.append({
-                'id': r[0], 'title': r[1], 'price': r[2], 'image_url': r[3],
-                'priority': r[4], 'notes': r[5], 'created_at': r[6], 'author': r[7]
-            })
-        return jsonify(items)
+            query = query.eq('author', author_filter)
+        result = query.execute()
+        return jsonify(result.data)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -359,11 +331,7 @@ def toggle_status():
             return jsonify({'error': 'Доступ запрещён'}), 403
         item_id = data.get('item_id')
         new_status = data.get('new_status')
-        conn = sqlite3.connect('zakupki.db')
-        c = conn.cursor()
-        c.execute('UPDATE items SET status=? WHERE id=?', (new_status, item_id))
-        conn.commit()
-        conn.close()
+        supabase.table('items').update({'status': new_status}).eq('id', item_id).execute()
         return jsonify({'status': 'ok'})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -376,11 +344,7 @@ def delete_item():
         if user_id not in ALLOWED_USERS:
             return jsonify({'error': 'Доступ запрещён'}), 403
         item_id = data.get('item_id')
-        conn = sqlite3.connect('zakupki.db')
-        c = conn.cursor()
-        c.execute('DELETE FROM items WHERE id=?', (item_id,))
-        conn.commit()
-        conn.close()
+        supabase.table('items').delete().eq('id', item_id).execute()
         return jsonify({'status': 'ok'})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -393,22 +357,14 @@ def get_item_detail():
         if user_id not in ALLOWED_USERS:
             return jsonify({'error': 'Доступ запрещён'}), 403
         item_id = data.get('item_id')
-        conn = sqlite3.connect('zakupki.db')
-        c = conn.cursor()
-        c.execute('SELECT title, price, image_url, priority, url, notes, created_at, author FROM items WHERE id=?', (item_id,))
-        row = c.fetchone()
-        conn.close()
-        if row:
-            return jsonify({
-                'title': row[0], 'price': row[1], 'image_url': row[2], 'priority': row[3],
-                'url': row[4], 'notes': row[5], 'created_at': row[6], 'author': row[7]
-            })
+        result = supabase.table('items').select('*').eq('id', item_id).execute()
+        if result.data:
+            return jsonify(result.data[0])
         else:
             return jsonify({'error': 'Не найдено'}), 404
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# ========== ОБНОВЛЕНИЕ ТОВАРА ==========
 @app.route('/api/update_item', methods=['POST'])
 def update_item():
     try:
@@ -417,27 +373,18 @@ def update_item():
         if user_id not in ALLOWED_USERS:
             return jsonify({'error': 'Доступ запрещён'}), 403
         item_id = data.get('id')
-        title = data.get('title')
-        price = data.get('price')
-        image_url = data.get('image_url')
-        priority = data.get('priority')
-        notes = data.get('notes')
-        url = data.get('url')
-        conn = sqlite3.connect('zakupki.db')
-        c = conn.cursor()
-        c.execute('''UPDATE items SET title=?, price=?, image_url=?, priority=?, notes=?, url=? WHERE id=?''',
-                  (title, price, image_url, priority, notes, url, item_id))
-        conn.commit()
-        conn.close()
+        update_data = {
+            'title': data.get('title'),
+            'price': data.get('price'),
+            'image_url': data.get('image_url'),
+            'priority': data.get('priority'),
+            'notes': data.get('notes'),
+            'url': data.get('url')
+        }
+        supabase.table('items').update(update_data).eq('id', item_id).execute()
         return jsonify({'status': 'ok'})
     except Exception as e:
-        print(e)
         return jsonify({'error': str(e)}), 500
-
-# ========== МАРШРУТ ДЛЯ ПИНГА (чтобы сервер не засыпал) ==========
-@app.route('/ping')
-def ping():
-    return "OK", 200
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
