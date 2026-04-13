@@ -32,6 +32,12 @@ TELEGRAM_API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 app = Flask(__name__)
 CORS(app)
 
+# ========== СТАТИЧЕСКАЯ РАЗДАЧА КОТИКОВ ==========
+# Папка cats должна быть в корне проекта и содержать изображения
+@app.route('/cats/<path:filename>')
+def cat_image(filename):
+    return send_from_directory('cats', filename)
+
 def send_telegram_notification(chat_id, text):
     try:
         payload = {'chat_id': chat_id, 'text': text, 'parse_mode': 'HTML'}
