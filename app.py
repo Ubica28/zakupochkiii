@@ -1,6 +1,4 @@
 # -*- coding: utf-8 -*-
-from dotenv import load_dotenv
-import os
 import sqlite3
 import os
 import time
@@ -11,6 +9,9 @@ from flask import Flask, request, jsonify, render_template, send_from_directory
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 import requests
+from dotenv import load_dotenv
+
+# Загружаем переменные окружения из .env (только для локальной разработки)
 load_dotenv()
 
 app = Flask(__name__)
@@ -50,7 +51,9 @@ def add_columns():
 
 add_columns()
 
-ALLOWED_USERS = [int(id.strip()) for id in os.getenv('ALLOWED_USERS', '').split(',') if id.strip()]
+# Разрешённые пользователи из переменной окружения (например: "955345205,123456789")
+ALLOWED_USERS_STR = os.getenv('ALLOWED_USERS', '')
+ALLOWED_USERS = [int(id.strip()) for id in ALLOWED_USERS_STR.split(',') if id.strip()]
 
 UPLOAD_FOLDER = 'uploads'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -250,7 +253,7 @@ def upload_image():
             return jsonify({'error': 'Пустое имя файла'}), 400
         filename = secure_filename(f"{int(time.time())}_{file.filename}")
         file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
-        # Возвращаем относительный путь, без домена
+        # Возвращаем относительный путь
         relative_path = f"/uploads/{filename}"
         return jsonify({'url': relative_path})
     except Exception as e:
@@ -339,7 +342,6 @@ def get_items():
         conn.close()
         items = []
         for r in rows:
-            # Не преобразуем URL на сервере, оставляем как есть (относительный или абсолютный)
             items.append({
                 'id': r[0], 'title': r[1], 'price': r[2], 'image_url': r[3],
                 'priority': r[4], 'notes': r[5], 'created_at': r[6], 'author': r[7]
@@ -431,6 +433,11 @@ def update_item():
     except Exception as e:
         print(e)
         return jsonify({'error': str(e)}), 500
+
+# ========== МАРШРУТ ДЛЯ ПИНГА (чтобы сервер не засыпал) ==========
+@app.route('/ping')
+def ping():
+    return "OK", 200
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
