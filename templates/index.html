@@ -505,30 +505,19 @@
         let userName = tg.initDataUnsafe?.user?.first_name || "Гость";
         let author = (userName === "Сергей" || userName === "Sergey") ? "Сергей" : (userName === "Настенька" || userName === "Nastya") ? "Настенька" : userName;
         
-		// Функция для преобразования URL фото (старый домен -> текущий, или относительный -> абсолютный)
 		function fixImageUrl(url) {
-   			 if (!url) return 'https://via.placeholder.com/300?text=Нет+фото';
-    		// Если это уже относительный путь к uploads, делаем абсолютный
-    			if (url.startsWith('/uploads/')) {
-       			 return window.location.origin + url;
-    			}
-    			// Если это абсолютный URL (http:// или https://), но с чужим доменом (например, старый trycloudflare)
-    			if (url.startsWith('http://') || url.startsWith('https://')) {
-        			// Пытаемся извлечь путь (часть после .com, .ru и т.п.)
-        			try {
-           		 const urlObj = new URL(url);
-            	// Если текущий домен уже совпадает с доменом в URL, возвращаем как есть
-            	if (urlObj.origin === window.location.origin) {
-                return url;
-            	}
-           	 // Иначе заменяем origin на текущий, а путь оставляем
-            return window.location.origin + urlObj.pathname;
-       			 } catch(e) {
-            return url;
-       	 }
-    	}
-    return url;
-	}
+    if (!url) return 'https://via.placeholder.com/300?text=Нет+фото';
+    // Если это уже абсолютный URL (http:// или https://) — возвращаем как есть
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+        return url;
+    }
+    // Если это относительный путь (начинается с /uploads/) — добавляем текущий origin
+    if (url.startsWith('/uploads/')) {
+        return window.location.origin + url;
+    }
+    // Если что-то другое — заглушка
+    return 'https://via.placeholder.com/300?text=Нет+фото';
+}
         
         // Приветствие
         const splash = document.getElementById('splash');

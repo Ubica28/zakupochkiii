@@ -391,6 +391,19 @@ def update_item():
         return jsonify({'status': 'ok'})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+import os
 
+@app.route('/api/cats', methods=['GET'])
+def get_cats():
+    cats_folder = os.path.join(os.path.dirname(__file__), 'cats')
+    if not os.path.exists(cats_folder):
+        return jsonify({'images': []})
+    files = [f for f in os.listdir(cats_folder) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.gif'))]
+    return jsonify({'images': files})
+
+@app.route('/cats/<path:filename>')
+def cat_image(filename):
+    cats_folder = os.path.join(os.path.dirname(__file__), 'cats')
+    return send_from_directory(cats_folder, filename)
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
