@@ -32,12 +32,6 @@ TELEGRAM_API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 app = Flask(__name__)
 CORS(app)
 
-# ========== СТАТИЧЕСКАЯ РАЗДАЧА КОТИКОВ ==========
-# Папка cats должна быть в корне проекта и содержать изображения
-@app.route('/cats/<path:filename>')
-def cat_image(filename):
-    return send_from_directory('cats', filename)
-
 def send_telegram_notification(chat_id, text):
     try:
         payload = {'chat_id': chat_id, 'text': text, 'parse_mode': 'HTML'}
@@ -50,7 +44,6 @@ def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 def compress_image(file_bytes, max_size_mb=0.5, quality=75):
-    """Сжимает изображение и возвращает BytesIO с JPEG"""
     img = Image.open(file_bytes)
     if img.mode in ('RGBA', 'P'):
         img = img.convert('RGB')
@@ -70,7 +63,7 @@ def extract_url_from_text(text):
     match = re.search(r'https?://\S+', text)
     return match.group(0) if match else text.strip()
 
-# ========== ПАРСИНГ ТОВАРОВ (ваш рабочий код) ==========
+# ========== ПАРСИНГ ТОВАРОВ ==========
 def parse_product(url):
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
@@ -288,7 +281,6 @@ def add_item():
         author = data.get('author', 'Гость')
         send_notification = data.get('send_notification', False)
 
-        # Вставка в Supabase
         item_data = {
             'url': url,
             'title': title,
@@ -391,8 +383,8 @@ def update_item():
         return jsonify({'status': 'ok'})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-import os
 
+# ========== МАРШРУТЫ ДЛЯ КОТИКОВ ==========
 @app.route('/api/cats', methods=['GET'])
 def get_cats():
     cats_folder = os.path.join(os.path.dirname(__file__), 'cats')
@@ -405,5 +397,6 @@ def get_cats():
 def cat_image(filename):
     cats_folder = os.path.join(os.path.dirname(__file__), 'cats')
     return send_from_directory(cats_folder, filename)
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
