@@ -1,0 +1,929 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Мои закупки</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background: var(--tg-theme-bg-color, #ffffff);
+            color: var(--tg-theme-text-color, #000000);
+            padding: 16px;
+            padding-bottom: 80px;
+        }
+        .network-indicator {
+            position: fixed;
+            top: 12px;
+            right: 12px;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background-color: #2ecc71;
+            box-shadow: 0 0 4px rgba(0,0,0,0.2);
+            z-index: 1000;
+            transition: background-color 0.3s;
+        }
+        .network-indicator.red { background-color: #e74c3c; }
+        .network-indicator.yellow { background-color: #f1c40f; }
+        .network-indicator.green { background-color: #2ecc71; }
+
+        .splash {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: var(--tg-theme-bg-color, #ffffff);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            transition: opacity 0.8s ease;
+            opacity: 1;
+            pointer-events: none;
+        }
+        .splash.hide { opacity: 0; pointer-events: none; }
+        .splash-content { text-align: center; animation: fadeInUp 0.6s ease; }
+        .splash-heart { font-size: 80px; margin-bottom: 20px; }
+        .splash-greeting { font-size: 28px; font-weight: 700; white-space: pre-line; line-height: 1.3; color: var(--tg-theme-button-color, #007aff); }
+        @keyframes fadeInUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+
+        .menu {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            display: flex;
+            justify-content: space-around;
+            background: var(--tg-theme-secondary-bg-color, #f8f8f8);
+            backdrop-filter: blur(10px);
+            border-top: 0.5px solid var(--tg-theme-hint-color, #ccc);
+            padding: 8px 0 12px;
+            z-index: 100;
+        }
+        .menu button {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+            background: none;
+            border: none;
+            font-size: 12px;
+            color: var(--tg-theme-hint-color, #8e8e93);
+            padding: 8px;
+            cursor: pointer;
+            transition: 0.2s;
+            border-radius: 12px;
+        }
+        .menu button:active { opacity: 0.6; }
+        .menu button span:first-child { font-size: 22px; }
+        .menu .active { color: var(--tg-theme-button-color, #007aff); }
+
+        .page { display: none; animation: fadeIn 0.2s ease; }
+        .page.active { display: block; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+        h2 { font-size: 24px; font-weight: 600; margin-bottom: 20px; letter-spacing: -0.3px; }
+
+        /* Фильтры – скрываем фильтр по цене */
+        .filters {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        .filters select {
+            flex: 1;
+            padding: 10px;
+            border-radius: 14px;
+            border: 0.5px solid #555;
+            background-color: #2c2c2e;
+            color: white;
+            font-size: 14px;
+        }
+        #filterPrice, #archiveFilterPrice { display: none; }
+
+        .card {
+            background: var(--tg-theme-secondary-bg-color, #f5f5f5);
+            border-radius: 16px;
+            margin-bottom: 12px;
+            padding: 12px;
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            transition: all 0.2s;
+            position: relative;
+            border-left: 4px solid transparent;
+        }
+        .card:active { transform: scale(0.98); }
+        .card[data-priority="high"] { border-left-color: #ff3b30; }
+        .card[data-priority="medium"] { border-left-color: #ff9500; }
+        .card[data-priority="low"] { border-left-color: #34c759; }
+
+        .card img {
+            width: 70px;
+            height: 70px;
+            object-fit: cover;
+            border-radius: 12px;
+            background: #e0e0e0;
+        }
+        .card-info { flex: 1; }
+        .card-title {
+            font-weight: 600;
+            font-size: 15px;
+            margin-bottom: 4px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+        .card-price { font-size: 14px; font-weight: 500; color: var(--tg-theme-text-color, #000); }
+        .card-date, .card-author { font-size: 10px; color: var(--tg-theme-hint-color, #8e8e93); margin-top: 2px; }
+        .notes-icon { font-size: 12px; color: var(--tg-theme-hint-color, #8e8e93); margin-left: 4px; }
+
+        .action-btn {
+            width: 36px;
+            height: 36px;
+            border-radius: 18px;
+            font-size: 18px;
+            background: var(--tg-theme-button-color, #007aff);
+            color: white;
+            border: none;
+            cursor: pointer;
+            margin-right: 8px;
+        }
+        .delete-btn {
+            background: rgba(0,0,0,0.05);
+            border: none;
+            width: 36px;
+            height: 36px;
+            border-radius: 18px;
+            cursor: pointer;
+            color: var(--tg-theme-hint-color, #8e8e93);
+            font-size: 18px;
+        }
+        .action-btn:active, .delete-btn:active { opacity: 0.7; transform: scale(0.96); }
+
+        .add-form input, .add-form select, .add-form textarea {
+            width: 100%;
+            padding: 14px;
+            margin: 8px 0;
+            border: 0.5px solid var(--tg-theme-hint-color, #ccc);
+            border-radius: 14px;
+            font-size: 16px;
+            background: var(--tg-theme-bg-color, white);
+            color: var(--tg-theme-text-color, black);
+            font-family: inherit;
+        }
+        .add-form textarea { resize: vertical; }
+        .manual-fields {
+            margin-top: 16px;
+            border-top: 1px solid var(--tg-theme-hint-color, #e0e0e0);
+            padding-top: 12px;
+        }
+        .manual-fields label {
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--tg-theme-hint-color, #666);
+            display: block;
+            margin-bottom: 4px;
+        }
+        .publish-btn {
+            background: var(--tg-theme-button-color, #007aff);
+            color: white;
+            width: 100%;
+            padding: 16px;
+            border: none;
+            border-radius: 14px;
+            font-size: 17px;
+            font-weight: 600;
+            margin-top: 20px;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        .publish-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+        .preview-img { max-width: 100px; border-radius: 12px; margin-top: 8px; }
+        .error-notice {
+            background: #ffcc00;
+            color: #333;
+            padding: 12px;
+            border-radius: 14px;
+            margin: 8px 0;
+            font-size: 14px;
+            text-align: center;
+        }
+        .file-upload-btn {
+            background: var(--tg-theme-secondary-bg-color, #e9e9ef);
+            border: 0.5px solid #ccc;
+            padding: 10px;
+            border-radius: 14px;
+            text-align: center;
+            margin-top: 8px;
+            cursor: pointer;
+        }
+        .loader {
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #007aff;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            margin-left: 10px;
+            vertical-align: middle;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        /* Модальное окно просмотра */
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            backdrop-filter: blur(4px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 200;
+        }
+        .modal-content {
+            background: var(--tg-theme-bg-color, white);
+            width: 90%;
+            max-width: 360px;
+            border-radius: 28px;
+            padding: 24px;
+            text-align: left;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.2);
+            position: relative;
+        }
+        .modal-content img {
+            width: 100%;
+            max-height: 260px;
+            object-fit: contain;
+            border-radius: 16px;
+            margin-bottom: 16px;
+        }
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .modal-header button {
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            color: var(--tg-theme-button-color, #007aff);
+            padding: 8px;
+        }
+        .info-block {
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 0.5px solid var(--tg-theme-hint-color, #ccc);
+        }
+        .info-block p {
+            margin-bottom: 12px;
+            line-height: 1.4;
+        }
+        .open-link-btn {
+            background: #f0f0f0;
+            color: #000;
+            border: 1px solid #ccc;
+            padding: 12px;
+            border-radius: 40px;
+            width: 100%;
+            text-align: center;
+            cursor: pointer;
+            margin-top: 16px;
+            display: inline-block;
+            text-decoration: none;
+        }
+        /* Редактирование */
+        .edit-modal .modal-content input, .edit-modal .modal-content select, .edit-modal .modal-content textarea {
+            width: 100%;
+            padding: 10px;
+            margin: 8px 0;
+            border: 0.5px solid #ccc;
+            border-radius: 12px;
+            font-size: 14px;
+        }
+        .modal-buttons {
+            display: flex;
+            gap: 8px;
+            margin-top: 16px;
+        }
+        .modal-buttons button {
+            flex: 1;
+            padding: 10px;
+            border-radius: 40px;
+            border: none;
+            cursor: pointer;
+        }
+        .save-btn { background: #007aff; color: white; }
+        .cancel-btn { background: #f0f0f0; color: #000; border: 1px solid #ccc; }
+        .settings-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 0;
+            border-bottom: 0.5px solid var(--tg-theme-hint-color, #ccc);
+        }
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 52px;
+            height: 28px;
+        }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: 0.3s;
+            border-radius: 28px;
+        }
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 22px;
+            width: 22px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: 0.3s;
+            border-radius: 50%;
+        }
+        input:checked + .slider { background-color: #007aff; }
+        input:checked + .slider:before { transform: translateX(24px); }
+        .cat-container {
+            margin-top: 20px;
+            text-align: center;
+        }
+        .cat-container img {
+            max-width: 100%;
+            border-radius: 16px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+    </style>
+</head>
+<body>
+    <div id="networkIndicator" class="network-indicator green"></div>
+    <div id="splash" class="splash">
+        <div class="splash-content">
+            <div id="heartIcon" class="splash-heart">❤️</div>
+            <div id="greetingText" class="splash-greeting"></div>
+        </div>
+    </div>
+    <div id="app" style="display: none;">
+        <div id="addPage" class="page">
+            <h2>➕ Добавить товар</h2>
+            <div class="add-form">
+                <input type="text" id="urlInput" placeholder="Ссылка на товар (Ozon, WB, Яндекс)">
+                <select id="prioritySelect">
+                    <option value="high">🔴 Высокий приоритет</option>
+                    <option value="medium">🟠 Средний приоритет</option>
+                    <option value="low">🟢 Низкий приоритет</option>
+                </select>
+                <div id="parseError" class="error-notice" style="display:none;"></div>
+                <div class="manual-fields">
+                    <label>Название товара *</label>
+                    <input type="text" id="manualTitle" placeholder="Введите название" autocomplete="off">
+                    <label>Цена</label>
+                    <input type="text" id="manualPrice" placeholder="Например, 1500 ₽">
+                    <label>Ссылка на фото (или загрузите ниже)</label>
+                    <input type="text" id="manualImage" placeholder="URL фото">
+                    <div id="imagePreview" class="preview-img"></div>
+                    <label>Загрузить фото с телефона</label>
+                    <input type="file" id="photoUpload" accept="image/*" style="display:none;">
+                    <div class="file-upload-btn" id="uploadBtn">📸 Выбрать фото</div>
+                    <div id="uploadLoader" style="display:none; text-align:center; margin-top:8px;"><div class="loader"></div> Загрузка...</div>
+                    <label>Заметки</label>
+                    <textarea id="notesInput" rows="2" placeholder="Ваши заметки..."></textarea>
+                </div>
+                <button class="publish-btn" id="publishBtn">Опубликовать</button>
+            </div>
+        </div>
+
+        <div id="zakupkiPage" class="page">
+            <h2>📦 Закупочки</h2>
+            <div class="filters">
+                <select id="filterPrice">
+                    <option value="default">По цене (по умолч.)</option>
+                    <option value="asc">Цена: сначала дешёвые</option>
+                    <option value="desc">Цена: сначала дорогие</option>
+                </select>
+                <select id="filterDate">
+                    <option value="newest">По дате: новые сначала</option>
+                    <option value="oldest">По дате: старые сначала</option>
+                </select>
+                <select id="filterPriority">
+                    <option value="all">Все приоритеты</option>
+                    <option value="high">Высокий 🔴</option>
+                    <option value="medium">Средний 🟠</option>
+                    <option value="low">Низкий 🟢</option>
+                </select>
+                <select id="filterAuthor">
+                    <option value="all">Все авторы</option>
+                    <option value="Сергей">Сергей</option>
+                    <option value="Настенька">Настенька</option>
+                </select>
+            </div>
+            <div id="zakupkiList"></div>
+        </div>
+
+        <div id="archivePage" class="page">
+            <h2>🗄 Архив</h2>
+            <div class="filters">
+                <select id="archiveFilterPrice">
+                    <option value="default">По цене (по умолч.)</option>
+                    <option value="asc">Цена: сначала дешёвые</option>
+                    <option value="desc">Цена: сначала дорогие</option>
+                </select>
+                <select id="archiveFilterDate">
+                    <option value="newest">По дате: новые сначала</option>
+                    <option value="oldest">По дате: старые сначала</option>
+                </select>
+                <select id="archiveFilterPriority">
+                    <option value="all">Все приоритеты</option>
+                    <option value="high">Высокий 🔴</option>
+                    <option value="medium">Средний 🟠</option>
+                    <option value="low">Низкий 🟢</option>
+                </select>
+                <select id="archiveFilterAuthor">
+                    <option value="all">Все авторы</option>
+                    <option value="Сергей">Сергей</option>
+                    <option value="Настенька">Настенька</option>
+                </select>
+            </div>
+            <div id="archiveList"></div>
+        </div>
+
+        <div id="settingsPage" class="page">
+            <h2>⚙️ Настройки</h2>
+            <div class="settings-item">
+                <span>🔔 Уведомления о новых товарах</span>
+                <label class="switch">
+                    <input type="checkbox" id="notificationsToggle">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <div class="settings-item">
+                <span>🤖 Автопарсинг (экспериментально)</span>
+                <label class="switch">
+                    <input type="checkbox" id="autoparseToggle">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <p style="font-size:12px; color:gray; margin: 8px 0;">Автоматическое заполнение полей из ссылки. Может работать нестабильно.</p>
+            <div class="cat-container">
+                <img id="randomCat" src="" style="display: none; max-width: 100%; border-radius: 16px;">
+            </div>
+        </div>
+
+        <div class="menu">
+            <button id="menuAdd"><span>➕</span><span>Добавить</span></button>
+            <button id="menuZakupki"><span>📦</span><span>Закупки</span></button>
+            <button id="menuArchive"><span>🗄</span><span>Архив</span></button>
+            <button id="menuSettings"><span>⚙️</span><span>Настройки</span></button>
+        </div>
+    </div>
+    <script>
+        let tg = window.Telegram.WebApp;
+        tg.expand();
+        let userId = tg.initDataUnsafe?.user?.id;
+        let userName = tg.initDataUnsafe?.user?.first_name || "Гость";
+        let author = (userName === "Сергей" || userName === "Sergey") ? "Сергей" : (userName === "Настенька" || userName === "Nastya") ? "Настенька" : userName;
+        
+        // Функция для преобразования URL фото (относительный или старый абсолютный -> текущий)
+        function fixImageUrl(url) {
+            if (!url) return 'https://via.placeholder.com/300?text=Нет+фото';
+            if (url.startsWith('/uploads/')) {
+                // относительный путь – добавляем текущий origin
+                return window.location.origin + url;
+            }
+            if (url.startsWith('http://') || url.startsWith('https://')) {
+                // абсолютный URL – заменяем протокол и хост на текущие
+                try {
+                    const currentOrigin = window.location.origin;
+                    // Если URL уже с текущим хостом – оставляем
+                    if (url.startsWith(currentOrigin)) return url;
+                    // Иначе извлекаем путь и подставляем текущий хост
+                    const urlObj = new URL(url);
+                    return currentOrigin + urlObj.pathname;
+                } catch(e) {
+                    return url;
+                }
+            }
+            return url;
+        }
+        
+        // Приветствие
+        const splash = document.getElementById('splash');
+        const appContainer = document.getElementById('app');
+        const greetingSpan = document.getElementById('greetingText');
+        const heartSpan = document.getElementById('heartIcon');
+        const colors = ['#ff3b30', '#ff2d55', '#ff9500', '#ff6b6b', '#e84393', '#a55eea', '#4b7bec', '#20bf6b'];
+        heartSpan.style.color = colors[Math.floor(Math.random() * colors.length)];
+        const hours = new Date().getHours();
+        let greeting = hours < 12 ? 'Доброе утро,\nНастенька' : (hours < 18 ? 'С добрым днем,\nНастенька' : 'Доброй ночи,\nкошечка');
+        greetingSpan.innerText = greeting;
+        
+        setTimeout(() => {
+            splash.classList.add('hide');
+            setTimeout(() => {
+                splash.style.display = 'none';
+                appContainer.style.display = 'block';
+            }, 800);
+        }, 1500);
+        
+        // Индикатор сети
+        const netIndicator = document.getElementById('networkIndicator');
+        let lastRequestTime = Date.now();
+        setInterval(() => {
+            if (Date.now() - lastRequestTime > 10000) netIndicator.className = 'network-indicator red';
+            else if (Date.now() - lastRequestTime > 3000) netIndicator.className = 'network-indicator yellow';
+            else netIndicator.className = 'network-indicator green';
+        }, 2000);
+        function updateNetworkStatus() { lastRequestTime = Date.now(); netIndicator.className = 'network-indicator green'; }
+
+        // DOM
+        const urlInput = document.getElementById('urlInput');
+        const prioritySelect = document.getElementById('prioritySelect');
+        const manualTitle = document.getElementById('manualTitle');
+        const manualPrice = document.getElementById('manualPrice');
+        const manualImage = document.getElementById('manualImage');
+        const imagePreview = document.getElementById('imagePreview');
+        const parseErrorDiv = document.getElementById('parseError');
+        const notesInput = document.getElementById('notesInput');
+        const publishBtn = document.getElementById('publishBtn');
+        const photoUpload = document.getElementById('photoUpload');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const uploadLoader = document.getElementById('uploadLoader');
+        const filterDate = document.getElementById('filterDate');
+        const filterPriority = document.getElementById('filterPriority');
+        const filterAuthor = document.getElementById('filterAuthor');
+        const archiveFilterDate = document.getElementById('archiveFilterDate');
+        const archiveFilterPriority = document.getElementById('archiveFilterPriority');
+        const archiveFilterAuthor = document.getElementById('archiveFilterAuthor');
+        const notificationsToggle = document.getElementById('notificationsToggle');
+        const autoparseToggle = document.getElementById('autoparseToggle');
+        const randomCatImg = document.getElementById('randomCat');
+        
+        let activeItems = [], archiveItems = [];
+        let isPublishing = false;
+        
+        // Настройки
+        let notificationsEnabled = localStorage.getItem('notifications') === 'true';
+        notificationsToggle.checked = notificationsEnabled;
+        notificationsToggle.addEventListener('change', () => {
+            notificationsEnabled = notificationsToggle.checked;
+            localStorage.setItem('notifications', notificationsEnabled);
+        });
+        
+        let autoparseEnabled = localStorage.getItem('autoparse') === 'true';
+        autoparseToggle.checked = autoparseEnabled;
+        autoparseToggle.addEventListener('change', () => {
+            autoparseEnabled = autoparseToggle.checked;
+            localStorage.setItem('autoparse', autoparseEnabled);
+        });
+        
+        async function loadRandomCat() {
+            try {
+                const res = await fetch('/api/cats');
+                const data = await res.json();
+                if (data.images && data.images.length) {
+                    const randomIndex = Math.floor(Math.random() * data.images.length);
+                    randomCatImg.src = `/cats/${data.images[randomIndex]}`;
+                    randomCatImg.style.display = 'block';
+                } else {
+                    randomCatImg.style.display = 'none';
+                }
+            } catch(e) {
+                randomCatImg.style.display = 'none';
+            }
+        }
+        
+        function formatPrice(price) {
+            let num = parseFloat(String(price).replace(/[^0-9.-]/g, ''));
+            if (isNaN(num)) return price;
+            return num.toLocaleString('ru-RU') + ' ₽';
+        }
+        
+        function getNumericPrice(priceStr) {
+            let num = parseFloat(String(priceStr).replace(/[^0-9.-]/g, ''));
+            return isNaN(num) ? 0 : num;
+        }
+        
+        function filterItems(items, priceOrder, dateOrder, priorityFilter, authorFilter) {
+            let filtered = [...items];
+            if (priorityFilter !== 'all') filtered = filtered.filter(i => i.priority === priorityFilter);
+            if (authorFilter !== 'all') filtered = filtered.filter(i => i.author === authorFilter);
+            if (priceOrder === 'asc') {
+                filtered.sort((a,b) => getNumericPrice(a.price) - getNumericPrice(b.price));
+            } else if (priceOrder === 'desc') {
+                filtered.sort((a,b) => getNumericPrice(b.price) - getNumericPrice(a.price));
+            }
+            if (dateOrder === 'newest') {
+                filtered.sort((a,b) => new Date(b.created_at||0) - new Date(a.created_at||0));
+            } else if (dateOrder === 'oldest') {
+                filtered.sort((a,b) => new Date(a.created_at||0) - new Date(b.created_at||0));
+            }
+            return filtered;
+        }
+        
+        function renderZakupki() {
+            const filtered = filterItems(activeItems, 'default', filterDate.value, filterPriority.value, filterAuthor.value);
+            const container = document.getElementById('zakupkiList');
+            container.innerHTML = '';
+            filtered.forEach(item => {
+                const date = item.created_at ? new Date(item.created_at) : new Date();
+                const formattedDate = `${date.toLocaleDateString()} ${date.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}`;
+                const displayPrice = formatPrice(item.price);
+                const imgUrl = fixImageUrl(item.image_url);
+                const div = document.createElement('div'); div.className = 'card'; div.setAttribute('data-priority', item.priority);
+                div.innerHTML = `<img src="${imgUrl}" onerror="this.src='https://via.placeholder.com/70'"><div class="card-info"><div class="card-title">${escapeHtml(item.title.substring(0,50))}</div><div class="card-price">${escapeHtml(displayPrice)}</div><div class="card-date">${formattedDate}</div><div class="card-author">👤 ${escapeHtml(item.author)}</div></div><button class="action-btn done-btn" data-id="${item.id}">✓</button><button class="delete-btn" data-id="${item.id}">✕</button>`;
+                div.querySelector('.done-btn').onclick = (e) => { e.stopPropagation(); toggleStatus(item.id, 'archived'); };
+                div.querySelector('.delete-btn').onclick = (e) => { e.stopPropagation(); deleteItem(item.id); };
+                div.querySelector('.card-info').addEventListener('click', () => showDetailModal(item.id));
+                container.appendChild(div);
+            });
+        }
+        
+        function renderArchive() {
+            const filtered = filterItems(archiveItems, 'default', archiveFilterDate.value, archiveFilterPriority.value, archiveFilterAuthor.value);
+            const container = document.getElementById('archiveList');
+            container.innerHTML = '';
+            filtered.forEach(item => {
+                const date = item.created_at ? new Date(item.created_at) : new Date();
+                const formattedDate = `${date.toLocaleDateString()} ${date.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}`;
+                const displayPrice = formatPrice(item.price);
+                const imgUrl = fixImageUrl(item.image_url);
+                const div = document.createElement('div'); div.className = 'card'; div.setAttribute('data-priority', item.priority);
+                div.innerHTML = `<img src="${imgUrl}" onerror="this.src='https://via.placeholder.com/70'"><div class="card-info"><div class="card-title">${escapeHtml(item.title.substring(0,50))}</div><div class="card-price">${escapeHtml(displayPrice)}</div><div class="card-date">${formattedDate}</div><div class="card-author">👤 ${escapeHtml(item.author)}</div></div><button class="action-btn undo-btn" data-id="${item.id}">↺</button><button class="delete-btn" data-id="${item.id}">✕</button>`;
+                div.querySelector('.undo-btn').onclick = (e) => { e.stopPropagation(); toggleStatus(item.id, 'active'); };
+                div.querySelector('.delete-btn').onclick = (e) => { e.stopPropagation(); deleteItem(item.id); };
+                div.querySelector('.card-info').addEventListener('click', () => showDetailModal(item.id));
+                container.appendChild(div);
+            });
+        }
+        
+        async function loadZakupki() { updateNetworkStatus(); const res = await fetch('/api/get_items', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ user_id:userId, status:'active', author_filter:filterAuthor.value }) }); activeItems = await res.json(); renderZakupki(); }
+        async function loadArchive() { updateNetworkStatus(); const res = await fetch('/api/get_items', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ user_id:userId, status:'archived', author_filter:archiveFilterAuthor.value }) }); archiveItems = await res.json(); renderArchive(); }
+        async function toggleStatus(id, newStatus) { updateNetworkStatus(); await fetch('/api/toggle_status', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ user_id:userId, item_id:id, new_status:newStatus }) }); await loadZakupki(); await loadArchive(); }
+        async function deleteItem(id) { if(!confirm('Удалить навсегда?')) return; updateNetworkStatus(); await fetch('/api/delete_item', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ user_id:userId, item_id:id }) }); await loadZakupki(); await loadArchive(); }
+        
+        // === МОДАЛЬНОЕ ОКНО ПРОСМОТРА ===
+        async function showDetailModal(id) {
+            updateNetworkStatus();
+            const res = await fetch('/api/get_item_detail', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ user_id:userId, item_id:id }) });
+            const d = await res.json();
+            const modal = document.createElement('div'); modal.className = 'modal';
+            const imgUrl = fixImageUrl(d.image_url);
+            modal.innerHTML = `
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <button class="edit-btn" data-id="${id}">✏️</button>
+                        <button class="close-btn">✕</button>
+                    </div>
+                    <img src="${imgUrl}" onerror="this.src='https://via.placeholder.com/300'">
+                    <div class="info-block">
+                        <p><strong>${escapeHtml(d.title)}</strong></p>
+                        <p>💰 ${formatPrice(d.price)}</p>
+                        <p>🔔 Приоритет: ${d.priority==='high'?'Высокий':d.priority==='medium'?'Средний':'Низкий'}</p>
+                        <p>👤 Добавил: ${escapeHtml(d.author)}</p>
+                        <p>📅 ${new Date(d.created_at).toLocaleString()}</p>
+                        ${d.notes ? `<p>📝 ${escapeHtml(d.notes)}</p>` : ''}
+                        <a href="${d.url}" target="_blank" class="open-link-btn">🔗 Открыть товар</a>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+            modal.querySelector('.close-btn').onclick = () => modal.remove();
+            modal.querySelector('.edit-btn').onclick = () => {
+                modal.remove();
+                showEditModal(id, d);
+            };
+        }
+        
+        // === МОДАЛЬНОЕ ОКНО РЕДАКТИРОВАНИЯ ===
+        async function showEditModal(id, currentData) {
+            const modal = document.createElement('div'); modal.className = 'modal edit-modal';
+            modal.innerHTML = `
+                <div class="modal-content">
+                    <h3 style="margin-bottom:16px;">✏️ Редактировать</h3>
+                    <input type="text" id="editTitle" value="${escapeHtml(currentData.title)}" placeholder="Название">
+                    <input type="text" id="editPrice" value="${escapeHtml(currentData.price)}" placeholder="Цена">
+                    <input type="text" id="editImage" value="${escapeHtml(currentData.image_url)}" placeholder="URL фото">
+                    <div id="editImagePreview" style="margin:8px 0;"></div>
+                    <div class="file-upload-btn" id="editUploadBtn">📸 Загрузить новое фото</div>
+                    <input type="file" id="editPhotoUpload" accept="image/*" style="display:none;">
+                    <div id="editUploadLoader" style="display:none; text-align:center; margin:8px 0;"><div class="loader"></div> Загрузка...</div>
+                    <select id="editPriority">
+                        <option value="high" ${currentData.priority==='high'?'selected':''}>🔴 Высокий</option>
+                        <option value="medium" ${currentData.priority==='medium'?'selected':''}>🟠 Средний</option>
+                        <option value="low" ${currentData.priority==='low'?'selected':''}>🟢 Низкий</option>
+                    </select>
+                    <textarea id="editNotes" rows="2" placeholder="Заметки">${escapeHtml(currentData.notes || '')}</textarea>
+                    <input type="text" id="editUrl" value="${escapeHtml(currentData.url)}" placeholder="Ссылка на товар">
+                    <div class="modal-buttons">
+                        <button class="save-btn" data-id="${id}">💾 Сохранить</button>
+                        <button class="cancel-btn">❌ Отмена</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+            
+            // Превью фото
+            const editImage = modal.querySelector('#editImage');
+            const previewDiv = modal.querySelector('#editImagePreview');
+            function updatePreview() {
+                const url = editImage.value.trim();
+                if (url && (url.startsWith('http') || url.startsWith('/uploads'))) {
+                    const fullUrl = url.startsWith('/uploads') ? window.location.origin + url : url;
+                    previewDiv.innerHTML = `<img src="${fullUrl}" style="max-width:100px; border-radius:12px;">`;
+                } else {
+                    previewDiv.innerHTML = '';
+                }
+            }
+            editImage.addEventListener('input', updatePreview);
+            updatePreview();
+            
+            // Загрузка нового фото
+            const uploadBtnEdit = modal.querySelector('#editUploadBtn');
+            const fileInputEdit = modal.querySelector('#editPhotoUpload');
+            const uploadLoaderEdit = modal.querySelector('#editUploadLoader');
+            uploadBtnEdit.onclick = () => fileInputEdit.click();
+            fileInputEdit.addEventListener('change', async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                uploadLoaderEdit.style.display = 'block';
+                const fd = new FormData(); fd.append('photo', file);
+                try {
+                    const res = await fetch('/api/upload_image', { method:'POST', body:fd });
+                    const data = await res.json();
+                    if (data.url) {
+                        editImage.value = data.url; // относительный путь
+                        updatePreview();
+                        tg.showAlert('Фото загружено');
+                    } else tg.showAlert('Ошибка загрузки');
+                } catch(err) { tg.showAlert('Ошибка сети'); }
+                uploadLoaderEdit.style.display = 'none';
+            });
+            
+            modal.querySelector('.cancel-btn').onclick = () => modal.remove();
+            modal.querySelector('.save-btn').onclick = async () => {
+                const updated = {
+                    id: id,
+                    title: modal.querySelector('#editTitle').value,
+                    price: modal.querySelector('#editPrice').value,
+                    image_url: modal.querySelector('#editImage').value,
+                    priority: modal.querySelector('#editPriority').value,
+                    notes: modal.querySelector('#editNotes').value,
+                    url: modal.querySelector('#editUrl').value
+                };
+                await fetch('/api/update_item', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user_id: userId, ...updated })
+                });
+                modal.remove();
+                await loadZakupki();
+                await loadArchive();
+                tg.showAlert('Товар обновлён');
+            };
+        }
+        
+        function showPage(pageId) {
+            document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+            document.getElementById(pageId).classList.add('active');
+            if (pageId === 'zakupkiPage') loadZakupki();
+            if (pageId === 'archivePage') loadArchive();
+            if (pageId === 'settingsPage') loadRandomCat();
+        }
+        document.getElementById('menuAdd').onclick = () => showPage('addPage');
+        document.getElementById('menuZakupki').onclick = () => showPage('zakupkiPage');
+        document.getElementById('menuArchive').onclick = () => showPage('archivePage');
+        document.getElementById('menuSettings').onclick = () => showPage('settingsPage');
+        
+        function updatePriorityColor() { const colors = { high: '#ff3b30', medium: '#ff9500', low: '#34c759' }; prioritySelect.style.backgroundColor = colors[prioritySelect.value]; prioritySelect.style.color = 'white'; }
+        prioritySelect.addEventListener('change', updatePriorityColor); updatePriorityColor();
+        
+        function updateImagePreview(url) {
+            if (url && (url.startsWith('http') || url.startsWith('/uploads'))) {
+                const fullUrl = url.startsWith('/uploads') ? window.location.origin + url : url;
+                imagePreview.innerHTML = `<img src="${fullUrl}" style="max-width:100px; border-radius:12px;">`;
+            } else {
+                imagePreview.innerHTML = '';
+            }
+        }
+        manualImage.addEventListener('input', () => updateImagePreview(manualImage.value));
+        
+        uploadBtn.onclick = () => photoUpload.click();
+        photoUpload.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            uploadLoader.style.display = 'block';
+            const fd = new FormData(); fd.append('photo', file);
+            try {
+                const res = await fetch('/api/upload_image', { method:'POST', body:fd });
+                const data = await res.json();
+                if (data.url) {
+                    manualImage.value = data.url; // относительный путь
+                    updateImagePreview(data.url);
+                } else tg.showAlert('Ошибка загрузки');
+            } catch(err) { tg.showAlert('Ошибка сети'); }
+            uploadLoader.style.display = 'none';
+        });
+        
+        let parseTimeout;
+        urlInput.addEventListener('input', () => {
+            clearTimeout(parseTimeout);
+            parseTimeout = setTimeout(async () => {
+                const raw = urlInput.value.trim();
+                parseErrorDiv.style.display = 'none';
+                if (!raw) return;
+                if (!autoparseEnabled) {
+                    parseErrorDiv.style.display = 'block';
+                    parseErrorDiv.innerHTML = '🤖 Автопарсинг отключён. Включите в настройках для автоматического заполнения.';
+                    return;
+                }
+                updateNetworkStatus();
+                parseErrorDiv.style.display = 'block';
+                parseErrorDiv.innerHTML = '⏳ Загрузка данных...';
+                try {
+                    const response = await fetch('/api/parse', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ user_id:userId, url:raw }) });
+                    const data = await response.json();
+                    if (data.error) {
+                        parseErrorDiv.innerHTML = '⚠️ ' + data.error;
+                    } else if (data.title) {
+                        manualTitle.value = data.title;
+                        manualPrice.value = data.price ? formatPrice(data.price) : '';
+                        if (data.image_url) {
+                            manualImage.value = data.image_url;
+                            updateImagePreview(data.image_url);
+                        }
+                        parseErrorDiv.style.display = 'none';
+                    } else {
+                        parseErrorDiv.innerHTML = '⚠️ Не удалось распознать товар. Заполните вручную.';
+                    }
+                } catch (err) {
+                    parseErrorDiv.innerHTML = '⚠️ Ошибка соединения. Заполните вручную.';
+                }
+            }, 800);
+        });
+        
+        publishBtn.onclick = async () => {
+            if (isPublishing) return;
+            isPublishing = true;
+            publishBtn.disabled = true;
+            try {
+                const title = manualTitle.value.trim();
+                if (!title) { tg.showAlert('Введите название'); isPublishing = false; publishBtn.disabled = false; return; }
+                let price = manualPrice.value.trim();
+                if (price && !price.includes('₽')) price = price.replace(/[^0-9]/g, '');
+                if (price === '') price = 'Цена не указана';
+                let image = manualImage.value.trim() || 'https://via.placeholder.com/300';
+                const priority = prioritySelect.value;
+                const url = urlInput.value.trim() || '';
+                const notes = notesInput.value;
+                updateNetworkStatus();
+                const response = await fetch('/api/add_item', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ user_id:userId, url, priority, title, price, image_url:image, notes, author, send_notification:notificationsEnabled }) });
+                if (response.status === 409) {
+                    tg.showAlert('Товар уже был добавлен только что. Подождите.');
+                } else {
+                    tg.showAlert('Товар добавлен!');
+                    urlInput.value = ''; manualTitle.value = ''; manualPrice.value = ''; manualImage.value = ''; notesInput.value = ''; imagePreview.innerHTML = '';
+                    parseErrorDiv.style.display = 'none';
+                    showPage('zakupkiPage');
+                }
+            } catch (e) {
+                tg.showAlert('Ошибка при добавлении');
+            } finally {
+                isPublishing = false;
+                publishBtn.disabled = false;
+            }
+        };
+        
+        filterDate.addEventListener('change', renderZakupki);
+        filterPriority.addEventListener('change', renderZakupki);
+        filterAuthor.addEventListener('change', loadZakupki);
+        archiveFilterDate.addEventListener('change', renderArchive);
+        archiveFilterPriority.addEventListener('change', renderArchive);
+        archiveFilterAuthor.addEventListener('change', loadArchive);
+        
+        function escapeHtml(str) { if(!str) return ''; return str.replace(/[&<>]/g, m => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;' }[m])); }
+        showPage('addPage');
+    </script>
+</body>
+</html>
